@@ -18,28 +18,39 @@ jobs:
           TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
         run: |
           mkdir -p "$HOME/.tempo/wallet"
-          echo "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
-          echo "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
+          printf '%s' "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
+          printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
           export PATH="$HOME/.tempo/bin:$PATH"
           tempo wallet whoami
 
-      - name: Send Crypto News to Telegram
+      - name: Fetch Crypto News
+        run: |
+          export PATH="$HOME/.tempo/bin:$PATH"
+          tempo request 'https://cryptopanic.com/api/free/v1/posts/?auth_token=public&filter=hot&kind=news&limit=5' > /tmp/news.json 2>/dev/null || echo '{"results":[]}' > /tmp/news.json
+          echo "News fetched"
+
+      - name: Send to Telegram
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          export PATH="$HOME/.tempo/bin:$PATH"
-          NEWS=$(tempo request 'https://cryptopanic.com/api/free/v1/posts/?auth_token=public&filter=hot&kind=news&limit=5' 2>/dev/null) || NEWS=""
-          DATE=$(date '+%d/%m/%Y %H:%M')
-          TEXT=$(echo "$NEWS" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-items=d.get('results',[])[:5]
-lines=['5 Tin tuc Crypto nong nhat - $(date +\"%d/%m/%Y %H:%M\")']
-for i,item in enumerate(items,1):
-    lines.append(str(i)+'. '+item.get('title',''))
-    lines.append('   '+item.get('url',''))
-print('%0A'.join(lines))
-" 2>/dev/null || echo "Khong lay duoc tin tuc")
-          curl -s "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${TEXT}&disable_web_page_preview=true" > /dev/null
-          echo "Done!"
+          python3 -c "
+          import os, json, urllib.request, urllib.parse, datetime
+          token = os.environ['TELEGRAM_TOKEN']
+          chat_id = os.environ['TELEGRAM_CHAT_ID']
+          date = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
+          try:
+              d = json.load(open('/tmp/news.json'))
+              items = d.get('results', [])[:5]
+              lines = ['5 Tin tuc Crypto nong nhat - ' + date]
+              for i, item in enumerate(items, 1):
+                  lines.append(str(i) + '. ' + item.get('title', ''))
+                  lines.append('   ' + item.get('url', ''))
+              text = '\n'.join(lines)
+          except:
+              text = 'Khong lay duoc tin tuc - ' + date
+          data = urllib.parse.urlencode({'chat_id': chat_id, 'text': text, 'disable_web_page_preview': 'true'}).encode()
+          req = urllib.request.Request('https://api.telegram.org/bot' + token + '/sendMessage', data=data)
+          resp = urllib.request.urlopen(req)
+          print('Sent OK:', resp.status)
+          "

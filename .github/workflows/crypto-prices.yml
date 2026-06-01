@@ -18,31 +18,43 @@ jobs:
           TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
         run: |
           mkdir -p "$HOME/.tempo/wallet"
-          echo "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
-          echo "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
+          printf '%s' "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
+          printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
           export PATH="$HOME/.tempo/bin:$PATH"
           tempo wallet whoami
 
-      - name: Send Crypto Prices to Telegram
+      - name: Fetch Crypto Prices
+        run: |
+          export PATH="$HOME/.tempo/bin:$PATH"
+          tempo request 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1' > /tmp/prices.json 2>/dev/null || echo '[]' > /tmp/prices.json
+          echo "Prices fetched"
+
+      - name: Send to Telegram
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          export PATH="$HOME/.tempo/bin:$PATH"
-          PRICES=$(tempo request 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1' 2>/dev/null) || PRICES=""
-          TEXT=$(echo "$PRICES" | python3 -c "
-import sys,json
-coins=json.load(sys.stdin)
-lines=['Gia 20 Coin Top - $(date +\"%d/%m/%Y %H:%M\")']
-for c in coins:
-    name=c['name']
-    sym=c['symbol'].upper()
-    price=c['current_price']
-    chg=c.get('price_change_percentage_24h') or 0
-    arrow='[+]' if chg>=0 else '[-]'
-    pstr=str(round(price,2)) if price>=1 else str(round(price,6))
-    lines.append(arrow+' '+name+' ('+sym+'): \$'+pstr+' ('+str(round(chg,2))+'%)')
-print('%0A'.join(lines))
-" 2>/dev/null || echo "Khong lay duoc gia")
-          curl -s "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${TEXT}" > /dev/null
-          echo "Done!"
+          python3 -c "
+          import os, json, urllib.request, urllib.parse, datetime
+          token = os.environ['TELEGRAM_TOKEN']
+          chat_id = os.environ['TELEGRAM_CHAT_ID']
+          date = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
+          try:
+              coins = json.load(open('/tmp/prices.json'))
+              lines = ['Gia 20 Coin Top - ' + date]
+              for c in coins:
+                  name = c['name']
+                  sym = c['symbol'].upper()
+                  price = c['current_price']
+                  chg = c.get('price_change_percentage_24h') or 0
+                  arrow = '[+]' if chg >= 0 else '[-]'
+                  pstr = str(round(price, 2)) if price >= 1 else str(round(price, 6))
+                  lines.append(arrow + ' ' + name + ' (' + sym + '): \$' + pstr + ' (' + str(round(chg, 2)) + '%)')
+              text = '\n'.join(lines)
+          except:
+              text = 'Khong lay duoc gia - ' + date
+          data = urllib.parse.urlencode({'chat_id': chat_id, 'text': text}).encode()
+          req = urllib.request.Request('https://api.telegram.org/bot' + token + '/sendMessage', data=data)
+          resp = urllib.request.urlopen(req)
+          print('Sent OK:', resp.status)
+          "
