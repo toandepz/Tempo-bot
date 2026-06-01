@@ -1,0 +1,48 @@
+name: 💰 Daily Crypto Prices
+
+on:
+  schedule:
+    - cron: "0 3 * * *"  # 10:00 sáng Hà Nội (UTC+7)
+  workflow_dispatch:
+
+jobs:
+  send-prices:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Tempo CLI
+        run: curl -fsSL https://tempo.xyz/install | bash
+
+      - name: Get Crypto Prices & Send to Telegram
+        env:
+          TEMPO_KEY: ${{ secrets.TEMPO_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          export PATH="$HOME/.tempo/bin:$PATH"
+
+          PRICES=$(tempo request "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1" 2>/dev/null)
+
+          MSG=$(echo "$PRICES" | python3 -c "
+import sys, json
+coins = json.load(sys.stdin)
+lines = ['💰 Giá 20 Coin Top hôm nay\n']
+for coin in coins:
+    name = coin['name']
+    symbol = coin['symbol'].upper()
+    price = coin['current_price']
+    change = coin['price_change_percentage_24h'] or 0
+    arrow = '🟢' if change >= 0 else '🔴'
+    if price >= 1:
+        price_str = f'\${price:,.2f}'
+    else:
+        price_str = f'\${price:.6f}'
+    lines.append(f'{arrow} {name} ({symbol}): {price_str} ({change:+.2f}%)')
+import datetime
+lines.append('\n📅 ' + datetime.datetime.now().strftime('%d/%m/%Y %H:%M'))
+print('\n'.join(lines))
+" 2>/dev/null || echo "Không thể lấy giá lúc này")
+
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${MSG}" > /dev/null
+          echo "Prices sent!"
