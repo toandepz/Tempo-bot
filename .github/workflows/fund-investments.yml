@@ -51,12 +51,11 @@ jobs:
             -d @/tmp/funds_body.json \
             -H 'Content-Type: application/json' \
             https://perplexity.mpp.paywithlocus.com/perplexity/chat \
-            > /tmp/funds.json 2>/tmp/funds_err.txt
+            -o /tmp/funds.json > /dev/null 2>/dev/null
           EXIT=$?
           echo "Exit=$EXIT Size=$(wc -c < /tmp/funds.json)"
           if [ $EXIT -ne 0 ] || [ ! -s /tmp/funds.json ]; then
-            echo "=== stderr ===" && cat /tmp/funds_err.txt || true
-            printf '{"success":false,"data":{"choices":[{"message":{"content":"Khong the lay du lieu dau tu luc nay, vui long thu lai sau."}}],"citations":[],"search_results":[]}}' > /tmp/funds.json
+            printf '{"success":false,"data":{"choices":[{"message":{"content":"Khong the lay du lieu dau tu luc nay."}}],"citations":[],"search_results":[]}}' > /tmp/funds.json
           fi
 
       - name: Send Fund Investments to Telegram
@@ -73,10 +72,7 @@ jobs:
 
           try:
               with open('/tmp/funds.json') as f:
-                  raw = f.read().strip()
-              if not raw:
-                  raise ValueError("Empty response file")
-              result = json.loads(raw)
+                  result = json.load(f)
 
               content = result['data']['choices'][0]['message']['content']
               content = re.sub(r'\[\d+\]', '', content)
