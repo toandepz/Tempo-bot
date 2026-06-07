@@ -1,0 +1,98 @@
+name: Daily Fund Investments
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-investments:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Tempo CLI
+        run: |
+          curl -fsSL https://tempo.xyz/install | bash
+          echo "$HOME/.tempo/bin" >> $GITHUB_PATH
+
+      - name: Setup Tempo Wallet
+        env:
+          TEMPO_KEYS_TOML: ${{ secrets.TEMPO_KEYS_TOML }}
+          TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
+        run: |
+          mkdir -p "$HOME/.tempo/wallet"
+          printf '%s' "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
+          printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
+          tempo wallet whoami
+
+      - name: Fetch Fund Investments via Tempo Perplexity
+        run: |
+          TODAY=$(date +"%B %d, %Y")
+          cat > /tmp/funds_body.json << JSONEOF
+          {"model":"sonar-pro","messages":[{"role":"user","content":"As of ${TODAY}, list the top 5 most notable venture capital or institutional fund investment deals from this week in AI, crypto, or tech. For each deal provide: (1) Fund/Investor name, (2) Company invested in, (3) Amount raised if available, (4) Sector/focus area. Format as a clear numbered list. Be concise."}],"max_tokens":600,"search_recency_filter":"week"}
+          JSONEOF
+          tempo request -j -s -X POST \
+            -d @/tmp/funds_body.json \
+            -H 'Content-Type: application/json' \
+            https://perplexity.mpp.paywithlocus.com/perplexity/chat \
+            > /tmp/funds.json 2>/dev/null || echo '{"success":false,"data":{}}' > /tmp/funds.json
+          echo "Done" && head -c 100 /tmp/funds.json
+
+      - name: Send Fund Investments to Telegram
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 << 'PYEOF'
+          import json, os, re, urllib.request, urllib.parse, datetime
+
+          token = os.environ['TELEGRAM_TOKEN']
+          chat_id = os.environ['TELEGRAM_CHAT_ID']
+          now = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
+
+          try:
+              with open('/tmp/funds.json') as f:
+                  result = json.load(f)
+
+              content = result['data']['choices'][0]['message']['content']
+              content = re.sub(r'\[\d+\]', '', content)
+              content = content.replace('**', '').replace('*', '').strip()
+
+              citations = result['data'].get('citations', [])
+              search_results = result['data'].get('search_results', [])
+
+              lines = [
+                  '\U0001f4bc C\xe1c Quỹ Đang Đầu Tư Tuần N\xe0y - ' + now,
+                  '━' * 22,
+                  '',
+                  content,
+                  '',
+                  '━' * 22,
+              ]
+
+              if search_results:
+                  lines.append('\U0001f4f0 Nguồn tham khảo:')
+                  for sr in search_results[:3]:
+                      title = sr.get('title', '')
+                      url = sr.get('url', '')
+                      if title and url:
+                          lines.append('  \U0001f4cc ' + title)
+                          lines.append('       \U0001f517 ' + url)
+
+              lines.append('━' * 22)
+              lines.append('\U0001f916 Powered by Perplexity AI qua Tempo')
+              text = '\n'.join(lines)
+
+          except Exception as e:
+              text = '❌ Lỗi lấy dữ liệu đầu tư - ' + now + '\n' + str(e)
+
+          data = urllib.parse.urlencode({
+              'chat_id': chat_id,
+              'text': text,
+              'disable_web_page_preview': 'true'
+          }).encode()
+          req = urllib.request.Request(
+              'https://api.telegram.org/bot' + token + '/sendMessage', data=data
+          )
+          resp = urllib.request.urlopen(req)
+          print('Sent OK:', resp.status)
+          PYEOF
