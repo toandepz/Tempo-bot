@@ -26,15 +26,29 @@ jobs:
 
       - name: Fetch Random Fact via Tempo Perplexity
         run: |
-          cat > /tmp/fact_body.json << 'JSONEOF'
-          {"model":"sonar","messages":[{"role":"user","content":"Give me 1 surprising and mind-blowing fact that most people don't know. Choose a random topic (science, history, nature, space, human body, etc). Be specific and fascinating. 2-4 sentences max."}],"max_tokens":200}
-          JSONEOF
-          tempo request -j -s -X POST \
+          python3 << 'BODYEOF'
+          import json
+          body = {
+              "model": "sonar",
+              "messages": [{"role": "user", "content": "Give me 1 surprising and mind-blowing fact most people dont know. Pick a random topic from science, history, nature, space, or biology. Be specific and fascinating. 2-4 sentences only."}],
+              "max_tokens": 200
+          }
+          with open('/tmp/fact_body.json', 'w') as f:
+              json.dump(body, f)
+          print("Body written OK")
+          BODYEOF
+
+          tempo request -j -X POST \
             -d @/tmp/fact_body.json \
             -H 'Content-Type: application/json' \
             https://perplexity.mpp.paywithlocus.com/perplexity/chat \
-            > /tmp/fact.json 2>/dev/null || echo '{"success":false,"data":{}}' > /tmp/fact.json
-          echo "Done" && head -c 100 /tmp/fact.json
+            > /tmp/fact.json 2>/tmp/fact_err.txt
+          EXIT=$?
+          echo "Exit=$EXIT Size=$(wc -c < /tmp/fact.json)"
+          if [ $EXIT -ne 0 ] || [ ! -s /tmp/fact.json ]; then
+            echo "=== stderr ===" && cat /tmp/fact_err.txt || true
+            printf '{"success":false,"data":{"choices":[{"message":{"content":"Khong the lay fact luc nay, vui long thu lai sau."}}],"citations":[],"search_results":[]}}' > /tmp/fact.json
+          fi
 
       - name: Send Fact to Telegram
         env:
@@ -50,16 +64,18 @@ jobs:
 
           try:
               with open('/tmp/fact.json') as f:
-                  result = json.load(f)
+                  raw = f.read().strip()
+              if not raw:
+                  raise ValueError("Empty response file")
+              result = json.loads(raw)
 
               content = result['data']['choices'][0]['message']['content']
               content = re.sub(r'\[\d+\]', '', content)
               content = content.replace('**', '').replace('*', '').strip()
 
               citations = result['data'].get('citations', [])
-              source_url = citations[0] if citations else ''
-
               search_results = result['data'].get('search_results', [])
+              source_url = citations[0] if citations else ''
               source_title = search_results[0].get('title', '') if search_results else ''
 
               lines = [
@@ -74,7 +90,7 @@ jobs:
               if source_url:
                   lines.append('\U0001f517 ' + source_url)
               lines.append('━' * 22)
-              lines.append('\U0001f916 Powered by Perplexity AI qua Tempo')
+              lines.append('\U0001f916 Perplexity AI qua Tempo')
               text = '\n'.join(lines)
 
           except Exception as e:
