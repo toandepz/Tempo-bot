@@ -1,0 +1,93 @@
+name: Daily Random Fact
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-fact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Tempo CLI
+        run: |
+          curl -fsSL https://tempo.xyz/install | bash
+          echo "$HOME/.tempo/bin" >> $GITHUB_PATH
+
+      - name: Setup Tempo Wallet
+        env:
+          TEMPO_KEYS_TOML: ${{ secrets.TEMPO_KEYS_TOML }}
+          TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
+        run: |
+          mkdir -p "$HOME/.tempo/wallet"
+          printf '%s' "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
+          printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
+          tempo wallet whoami
+
+      - name: Fetch Random Fact via Tempo Perplexity
+        run: |
+          cat > /tmp/fact_body.json << 'JSONEOF'
+          {"model":"sonar","messages":[{"role":"user","content":"Give me 1 surprising and mind-blowing fact that most people don't know. Choose a random topic (science, history, nature, space, human body, etc). Be specific and fascinating. 2-4 sentences max."}],"max_tokens":200}
+          JSONEOF
+          tempo request -j -s -X POST \
+            -d @/tmp/fact_body.json \
+            -H 'Content-Type: application/json' \
+            https://perplexity.mpp.paywithlocus.com/perplexity/chat \
+            > /tmp/fact.json 2>/dev/null || echo '{"success":false,"data":{}}' > /tmp/fact.json
+          echo "Done" && head -c 100 /tmp/fact.json
+
+      - name: Send Fact to Telegram
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 << 'PYEOF'
+          import json, os, re, urllib.request, urllib.parse, datetime
+
+          token = os.environ['TELEGRAM_TOKEN']
+          chat_id = os.environ['TELEGRAM_CHAT_ID']
+          now = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
+
+          try:
+              with open('/tmp/fact.json') as f:
+                  result = json.load(f)
+
+              content = result['data']['choices'][0]['message']['content']
+              content = re.sub(r'\[\d+\]', '', content)
+              content = content.replace('**', '').replace('*', '').strip()
+
+              citations = result['data'].get('citations', [])
+              source_url = citations[0] if citations else ''
+
+              search_results = result['data'].get('search_results', [])
+              source_title = search_results[0].get('title', '') if search_results else ''
+
+              lines = [
+                  '\U0001f3b2 Random Fact Th\xfa Vị - ' + now,
+                  '━' * 22,
+                  '',
+                  '\U0001f4a1 ' + content,
+                  '',
+              ]
+              if source_title:
+                  lines.append('\U0001f4da Nguồn: ' + source_title)
+              if source_url:
+                  lines.append('\U0001f517 ' + source_url)
+              lines.append('━' * 22)
+              lines.append('\U0001f916 Powered by Perplexity AI qua Tempo')
+              text = '\n'.join(lines)
+
+          except Exception as e:
+              text = '❌ Lỗi lấy fact - ' + now + '\n' + str(e)
+
+          data = urllib.parse.urlencode({
+              'chat_id': chat_id,
+              'text': text,
+              'disable_web_page_preview': 'true'
+          }).encode()
+          req = urllib.request.Request(
+              'https://api.telegram.org/bot' + token + '/sendMessage', data=data
+          )
+          resp = urllib.request.urlopen(req)
+          print('Sent OK:', resp.status)
+          PYEOF
