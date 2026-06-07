@@ -10,9 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install Tempo CLI
-        run: curl -fsSL https://tempo.xyz/install | bash
+        run: |
+          curl -fsSL https://tempo.xyz/install | bash
+          echo "$HOME/.tempo/bin" >> $GITHUB_PATH
 
-      - name: Active Tempo Wallet
+      - name: Setup Tempo Wallet
         env:
           TEMPO_KEYS_TOML: ${{ secrets.TEMPO_KEYS_TOML }}
           TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
@@ -20,7 +22,6 @@ jobs:
           mkdir -p "$HOME/.tempo/wallet"
           printf '%s' "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
           printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
-          export PATH="$HOME/.tempo/bin:$PATH"
           tempo wallet whoami
 
       - name: Send Weather to Telegram
@@ -28,24 +29,69 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          WEATHER=$(curl -s "https://wttr.in/Hanoi?format=j1" 2>/dev/null) || WEATHER="{}"
-          python3 -c "
-          import os, json, urllib.request, urllib.parse, datetime
+          curl -s "https://wttr.in/Hanoi?format=j1" > /tmp/weather.json 2>/dev/null || echo '{}' > /tmp/weather.json
+          python3 << 'PYEOF'
+          import json, os, urllib.request, urllib.parse, datetime
+
           token = os.environ['TELEGRAM_TOKEN']
           chat_id = os.environ['TELEGRAM_CHAT_ID']
+          now = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
+
           try:
-              d = json.loads('''$WEATHER''')
+              with open('/tmp/weather.json') as f:
+                  d = json.load(f)
               cc = d['current_condition'][0]
               temp = cc['temp_C']
               feels = cc['FeelsLikeC']
               humid = cc['humidity']
+              wind = cc['windspeedKmph']
               desc = cc['weatherDesc'][0]['value']
-          except:
-              temp = feels = humid = desc = 'N/A'
-          date = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
-          text = 'Du bao thoi tiet Ha Noi - ' + date + '\nNhiet do: ' + temp + 'C (cam giac ' + feels + 'C)\nDo am: ' + humid + '%\nTrang thai: ' + desc
+              uv = cc.get('uvIndex', 'N/A')
+              vis = cc.get('visibility', 'N/A')
+              code = int(cc.get('weatherCode', 113))
+              w0 = d['weather'][0]
+              max_t = w0['maxtempC']
+              min_t = w0['mintempC']
+              rain_mm = w0.get('hourly', [{}])[4].get('precipMM', '0')
+
+              if code == 113:
+                  sky = '☀️ N\xe1́ng đẹp'
+              elif code == 116:
+                  sky = '⛅ M\xe2y rải r\xe1c'
+              elif code in [119, 122]:
+                  sky = '☁️ Trời m\xe2y'
+              elif code in [143, 248, 260]:
+                  sky = '\U0001f32b️ Sương m\xf9'
+              elif code in [200, 386, 389, 392, 395]:
+                  sky = '⛈️ B\xe3o tố'
+              elif code in [176, 263, 266, 281, 284, 293, 296, 299, 302, 305, 308, 353, 356, 359]:
+                  sky = '\U0001f327️ C\xf3 mưa'
+              elif code in [179, 182, 185, 323, 326, 329, 332, 335, 338, 350, 368, 371, 374, 377]:
+                  sky = '\U0001f328️ C\xf3 tuyết'
+              else:
+                  sky = '\U0001f324️ ' + desc
+
+              lines = [
+                  '\U0001f324️ Dự B\xe1o Thời Tiết H\xe0 Nội - ' + now,
+                  '━' * 20,
+                  '\U0001f321️  Nhiệt độ: ' + temp + '\xb0C  (cảm gi\xe1c ' + feels + '\xb0C)',
+                  '\U0001f4a7 Độ ẩm: ' + humid + '%',
+                  '\U0001f32c️ Gi\xf3: ' + wind + ' km/h',
+                  '\U0001f31e Trạng th\xe1i: ' + sky,
+                  '\U0001f4ca Cao / Thấp: ' + max_t + '\xb0C / ' + min_t + '\xb0C',
+                  '☔ Lượng mưa dự b\xe1o: ' + str(rain_mm) + ' mm',
+                  '\U0001f315 Chỉ số UV: ' + str(uv),
+                  '━' * 20,
+                  '\U0001f4cc dữ liệu: wttr.in'
+              ]
+              text = '\n'.join(lines)
+          except Exception as e:
+              text = '❌ Lỗi lấy thời tiết - ' + now + '\n' + str(e)
+
           data = urllib.parse.urlencode({'chat_id': chat_id, 'text': text}).encode()
-          req = urllib.request.Request('https://api.telegram.org/bot' + token + '/sendMessage', data=data)
+          req = urllib.request.Request(
+              'https://api.telegram.org/bot' + token + '/sendMessage', data=data
+          )
           resp = urllib.request.urlopen(req)
           print('Sent OK:', resp.status)
-          "
+          PYEOF
