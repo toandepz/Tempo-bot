@@ -10,9 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install Tempo CLI
-        run: curl -fsSL https://tempo.xyz/install | bash
+        run: |
+          curl -fsSL https://tempo.xyz/install | bash
+          echo "$HOME/.tempo/bin" >> $GITHUB_PATH
 
-      - name: Active Tempo Wallet
+      - name: Setup Tempo Wallet
         env:
           TEMPO_KEYS_TOML: ${{ secrets.TEMPO_KEYS_TOML }}
           TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
@@ -20,36 +22,91 @@ jobs:
           mkdir -p "$HOME/.tempo/wallet"
           printf '%s' "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
           printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
-          export PATH="$HOME/.tempo/bin:$PATH"
           tempo wallet whoami
+
+      - name: Fetch Crypto Prices via Tempo CoinGecko
+        run: |
+          PARAMS='{"vs_currency":"usd","order":"market_cap_desc","per_page":20,"page":1}'
+          tempo request -j -s -X POST --json "$PARAMS" \
+            https://coingecko.mpp.paywithlocus.com/coingecko/coins-markets \
+            > /tmp/prices.json 2>/dev/null || echo '{"success":false,"data":[]}' > /tmp/prices.json
+          echo "Fetch done"
+          head -c 200 /tmp/prices.json
 
       - name: Send Crypto Prices to Telegram
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          PRICES=$(curl -s "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1" 2>/dev/null) || PRICES='[]'
-          python3 -c "
-          import os, json, urllib.request, urllib.parse, datetime
+          python3 << 'PYEOF'
+          import json, os, urllib.request, urllib.parse, datetime
+
           token = os.environ['TELEGRAM_TOKEN']
           chat_id = os.environ['TELEGRAM_CHAT_ID']
-          date = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
+          now = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
+
+          rank_icons = {1: '🥇', 2: '🥈', 3: '🥉'}
+
           try:
-              coins = json.loads('''$PRICES''')
-              lines = ['Gia 20 Coin Top - ' + date]
-              for c in coins:
-                  name = c['name']
-                  sym = c['symbol'].upper()
-                  price = c['current_price']
-                  chg = c.get('price_change_percentage_24h') or 0
-                  arrow = '[+]' if chg >= 0 else '[-]'
-                  pstr = str(round(price, 2)) if price >= 1 else str(round(price, 6))
-                  lines.append(arrow + ' ' + name + ' (' + sym + '): \$' + pstr + ' (' + str(round(chg, 2)) + '%)')
+              with open('/tmp/prices.json') as f:
+                  result = json.load(f)
+
+              coins = []
+              if result.get('success') and result.get('data'):
+                  coins = result['data']
+
+              lines = [
+                  '\U0001f4b0 Top 20 Coin - ' + now,
+                  '━' * 22,
+              ]
+
+              if coins:
+                  for c in coins:
+                      rank = c.get('market_cap_rank', 0)
+                      name = c['name']
+                      sym = c['symbol'].upper()
+                      price = c.get('current_price', 0)
+                      chg = c.get('price_change_percentage_24h') or 0
+                      vol = c.get('total_volume', 0)
+
+                      r_icon = rank_icons.get(rank, '#' + str(rank))
+                      trend = '📈' if chg >= 0 else '📉'
+                      sign = '+' if chg >= 0 else ''
+
+                      if price >= 1000:
+                          p_str = '${:,.0f}'.format(price)
+                      elif price >= 1:
+                          p_str = '${:,.2f}'.format(price)
+                      else:
+                          p_str = '${:.5f}'.format(price)
+
+                      if vol >= 1_000_000_000:
+                          v_str = '${:.1f}B'.format(vol / 1_000_000_000)
+                      elif vol >= 1_000_000:
+                          v_str = '${:.0f}M'.format(vol / 1_000_000)
+                      else:
+                          v_str = '${:,.0f}'.format(vol)
+
+                      lines.append(
+                          r_icon + ' ' + name + ' (' + sym + '): ' + p_str +
+                          '  ' + trend + ' ' + sign + '{:.2f}%'.format(chg) +
+                          '  \U0001f4ca ' + v_str
+                      )
+
+                  lines.append('━' * 22)
+                  lines.append('\U0001f4cc Nguồn: CoinGecko qua Tempo')
+              else:
+                  lines.append('⚠️ Kh\xf4ng lấy được gi\xe1 - vui l\xf2ng thử lại sau')
+
               text = '\n'.join(lines)
+
           except Exception as e:
-              text = 'Khong lay duoc gia - ' + date + ' - ' + str(e)
+              text = '❌ Lỗi lấy gi\xe1 coin - ' + now + '\n' + str(e)
+
           data = urllib.parse.urlencode({'chat_id': chat_id, 'text': text}).encode()
-          req = urllib.request.Request('https://api.telegram.org/bot' + token + '/sendMessage', data=data)
+          req = urllib.request.Request(
+              'https://api.telegram.org/bot' + token + '/sendMessage', data=data
+          )
           resp = urllib.request.urlopen(req)
           print('Sent OK:', resp.status)
-          "
+          PYEOF
