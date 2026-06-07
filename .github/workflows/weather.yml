@@ -12,7 +12,7 @@ jobs:
       - name: Install Tempo CLI
         run: curl -fsSL https://tempo.xyz/install | bash
 
-      - name: Setup Tempo Wallet
+      - name: Active Tempo Wallet
         env:
           TEMPO_KEYS_TOML: ${{ secrets.TEMPO_KEYS_TOML }}
           TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
@@ -23,23 +23,18 @@ jobs:
           export PATH="$HOME/.tempo/bin:$PATH"
           tempo wallet whoami
 
-      - name: Fetch Weather
-        run: |
-          export PATH="$HOME/.tempo/bin:$PATH"
-          tempo request 'https://wttr.in/Hanoi?format=j1' > /tmp/weather.json 2>/dev/null || echo '{}' > /tmp/weather.json
-          echo "Weather fetched"
-
-      - name: Send to Telegram
+      - name: Send Weather to Telegram
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          WEATHER=$(curl -s "https://wttr.in/Hanoi?format=j1" 2>/dev/null) || WEATHER="{}"
           python3 -c "
           import os, json, urllib.request, urllib.parse, datetime
           token = os.environ['TELEGRAM_TOKEN']
           chat_id = os.environ['TELEGRAM_CHAT_ID']
           try:
-              d = json.load(open('/tmp/weather.json'))
+              d = json.loads('''$WEATHER''')
               cc = d['current_condition'][0]
               temp = cc['temp_C']
               feels = cc['FeelsLikeC']
