@@ -1,0 +1,55 @@
+name: Daily Crypto Prices
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-prices:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Tempo CLI
+        run: curl -fsSL https://tempo.xyz/install | bash
+
+      - name: Active Tempo Wallet
+        env:
+          TEMPO_KEYS_TOML: ${{ secrets.TEMPO_KEYS_TOML }}
+          TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
+        run: |
+          mkdir -p "$HOME/.tempo/wallet"
+          printf '%s' "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
+          printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
+          export PATH="$HOME/.tempo/bin:$PATH"
+          tempo wallet whoami
+
+      - name: Send Crypto Prices to Telegram
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          PRICES=$(curl -s "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1" 2>/dev/null) || PRICES='[]'
+          python3 -c "
+          import os, json, urllib.request, urllib.parse, datetime
+          token = os.environ['TELEGRAM_TOKEN']
+          chat_id = os.environ['TELEGRAM_CHAT_ID']
+          date = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
+          try:
+              coins = json.loads('''$PRICES''')
+              lines = ['Gia 20 Coin Top - ' + date]
+              for c in coins:
+                  name = c['name']
+                  sym = c['symbol'].upper()
+                  price = c['current_price']
+                  chg = c.get('price_change_percentage_24h') or 0
+                  arrow = '[+]' if chg >= 0 else '[-]'
+                  pstr = str(round(price, 2)) if price >= 1 else str(round(price, 6))
+                  lines.append(arrow + ' ' + name + ' (' + sym + '): \$' + pstr + ' (' + str(round(chg, 2)) + '%)')
+              text = '\n'.join(lines)
+          except Exception as e:
+              text = 'Khong lay duoc gia - ' + date + ' - ' + str(e)
+          data = urllib.parse.urlencode({'chat_id': chat_id, 'text': text}).encode()
+          req = urllib.request.Request('https://api.telegram.org/bot' + token + '/sendMessage', data=data)
+          resp = urllib.request.urlopen(req)
+          print('Sent OK:', resp.status)
+          "

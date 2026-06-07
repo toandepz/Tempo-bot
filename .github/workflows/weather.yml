@@ -1,0 +1,51 @@
+name: Daily Weather
+
+on:
+  schedule:
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-weather:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Tempo CLI
+        run: curl -fsSL https://tempo.xyz/install | bash
+
+      - name: Active Tempo Wallet
+        env:
+          TEMPO_KEYS_TOML: ${{ secrets.TEMPO_KEYS_TOML }}
+          TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
+        run: |
+          mkdir -p "$HOME/.tempo/wallet"
+          printf '%s' "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
+          printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
+          export PATH="$HOME/.tempo/bin:$PATH"
+          tempo wallet whoami
+
+      - name: Send Weather to Telegram
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          WEATHER=$(curl -s "https://wttr.in/Hanoi?format=j1" 2>/dev/null) || WEATHER="{}"
+          python3 -c "
+          import os, json, urllib.request, urllib.parse, datetime
+          token = os.environ['TELEGRAM_TOKEN']
+          chat_id = os.environ['TELEGRAM_CHAT_ID']
+          try:
+              d = json.loads('''$WEATHER''')
+              cc = d['current_condition'][0]
+              temp = cc['temp_C']
+              feels = cc['FeelsLikeC']
+              humid = cc['humidity']
+              desc = cc['weatherDesc'][0]['value']
+          except:
+              temp = feels = humid = desc = 'N/A'
+          date = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
+          text = 'Du bao thoi tiet Ha Noi - ' + date + '\nNhiet do: ' + temp + 'C (cam giac ' + feels + 'C)\nDo am: ' + humid + '%\nTrang thai: ' + desc
+          data = urllib.parse.urlencode({'chat_id': chat_id, 'text': text}).encode()
+          req = urllib.request.Request('https://api.telegram.org/bot' + token + '/sendMessage', data=data)
+          resp = urllib.request.urlopen(req)
+          print('Sent OK:', resp.status)
+          "
