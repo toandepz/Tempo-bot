@@ -35,34 +35,18 @@ jobs:
           }
           with open('/tmp/fact_body.json', 'w') as f:
               json.dump(body, f)
-          print("Body written OK")
           BODYEOF
 
           tempo request -j -X POST \
             -d @/tmp/fact_body.json \
             -H 'Content-Type: application/json' \
             https://perplexity.mpp.paywithlocus.com/perplexity/chat \
-            -o /tmp/fact_raw.json > /tmp/fact_stdout.txt 2>/tmp/fact_err.txt
+            -o /tmp/fact.json > /dev/null 2>/dev/null
           EXIT=$?
-
-          echo "=== Exit: $EXIT ==="
-          echo "=== raw size: $(wc -c < /tmp/fact_raw.json) bytes ==="
-          echo "=== stdout size: $(wc -c < /tmp/fact_stdout.txt) bytes ==="
-          echo "=== first 120 bytes of raw (hex) ==="
-          od -c /tmp/fact_raw.json | head -3
-          echo "=== stdout content ==="
-          cat /tmp/fact_stdout.txt | head -5
-          echo "=== stderr content ==="
-          cat /tmp/fact_err.txt | head -5
-
-          if [ -s /tmp/fact_raw.json ]; then
-            cp /tmp/fact_raw.json /tmp/fact.json
-          elif [ -s /tmp/fact_stdout.txt ]; then
-            cp /tmp/fact_stdout.txt /tmp/fact.json
-          else
+          echo "Exit=$EXIT Size=$(wc -c < /tmp/fact.json)"
+          if [ $EXIT -ne 0 ] || [ ! -s /tmp/fact.json ]; then
             printf '{"success":false,"data":{"choices":[{"message":{"content":"Khong the lay fact luc nay."}}],"citations":[],"search_results":[]}}' > /tmp/fact.json
           fi
-          echo "=== Final fact.json size: $(wc -c < /tmp/fact.json) ==="
 
       - name: Send Fact to Telegram
         env:
@@ -77,18 +61,8 @@ jobs:
           now = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
 
           try:
-              with open('/tmp/fact.json', 'rb') as f:
-                  raw_bytes = f.read()
-              # Strip non-JSON prefix (ANSI codes, WARN messages)
-              raw = raw_bytes.decode('utf-8', errors='replace').strip()
-              idx = raw.find('{"success"')
-              if idx < 0:
-                  idx = raw.find('{')
-              if idx > 0:
-                  raw = raw[idx:]
-              if not raw:
-                  raise ValueError("Empty response")
-              result = json.loads(raw)
+              with open('/tmp/fact.json') as f:
+                  result = json.load(f)
 
               content = result['data']['choices'][0]['message']['content']
               content = re.sub(r'\[\d+\]', '', content)
