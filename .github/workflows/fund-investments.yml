@@ -27,15 +27,37 @@ jobs:
       - name: Fetch Fund Investments via Tempo Perplexity
         run: |
           TODAY=$(date +"%B %d, %Y")
-          cat > /tmp/funds_body.json << JSONEOF
-          {"model":"sonar-pro","messages":[{"role":"user","content":"As of ${TODAY}, list the top 5 most notable venture capital or institutional fund investment deals from this week in AI, crypto, or tech. For each deal provide: (1) Fund/Investor name, (2) Company invested in, (3) Amount raised if available, (4) Sector/focus area. Format as a clear numbered list. Be concise."}],"max_tokens":600,"search_recency_filter":"week"}
-          JSONEOF
-          tempo request -j -s -X POST \
+          python3 - "$TODAY" << 'BODYEOF'
+          import json, sys
+          today = sys.argv[1]
+          body = {
+              "model": "sonar-pro",
+              "messages": [{"role": "user", "content": (
+                  "As of " + today + ", list the 5 most notable venture capital or institutional "
+                  "fund investment deals from THIS WEEK in AI, crypto, or tech. "
+                  "For each deal: (1) Fund/Investor name, (2) Company invested in, "
+                  "(3) Amount raised if available, (4) Sector. "
+                  "Format as a numbered list. Be concise and factual."
+              )}],
+              "max_tokens": 600,
+              "search_recency_filter": "week"
+          }
+          with open('/tmp/funds_body.json', 'w') as f:
+              json.dump(body, f)
+          print("Body written OK for:", today)
+          BODYEOF
+
+          tempo request -j -X POST \
             -d @/tmp/funds_body.json \
             -H 'Content-Type: application/json' \
             https://perplexity.mpp.paywithlocus.com/perplexity/chat \
-            > /tmp/funds.json 2>/dev/null || echo '{"success":false,"data":{}}' > /tmp/funds.json
-          echo "Done" && head -c 100 /tmp/funds.json
+            > /tmp/funds.json 2>/tmp/funds_err.txt
+          EXIT=$?
+          echo "Exit=$EXIT Size=$(wc -c < /tmp/funds.json)"
+          if [ $EXIT -ne 0 ] || [ ! -s /tmp/funds.json ]; then
+            echo "=== stderr ===" && cat /tmp/funds_err.txt || true
+            printf '{"success":false,"data":{"choices":[{"message":{"content":"Khong the lay du lieu dau tu luc nay, vui long thu lai sau."}}],"citations":[],"search_results":[]}}' > /tmp/funds.json
+          fi
 
       - name: Send Fund Investments to Telegram
         env:
@@ -51,35 +73,34 @@ jobs:
 
           try:
               with open('/tmp/funds.json') as f:
-                  result = json.load(f)
+                  raw = f.read().strip()
+              if not raw:
+                  raise ValueError("Empty response file")
+              result = json.loads(raw)
 
               content = result['data']['choices'][0]['message']['content']
               content = re.sub(r'\[\d+\]', '', content)
               content = content.replace('**', '').replace('*', '').strip()
 
-              citations = result['data'].get('citations', [])
               search_results = result['data'].get('search_results', [])
 
               lines = [
-                  '\U0001f4bc C\xe1c Quỹ Đang Đầu Tư Tuần N\xe0y - ' + now,
+                  '\U0001f4bc C\xe1c Quỹ Đang Đầu Tư - ' + now,
                   '━' * 22,
                   '',
                   content,
                   '',
                   '━' * 22,
               ]
-
               if search_results:
-                  lines.append('\U0001f4f0 Nguồn tham khảo:')
+                  lines.append('\U0001f4f0 Nguồn:')
                   for sr in search_results[:3]:
-                      title = sr.get('title', '')
-                      url = sr.get('url', '')
-                      if title and url:
-                          lines.append('  \U0001f4cc ' + title)
-                          lines.append('       \U0001f517 ' + url)
-
+                      t = sr.get('title', '')
+                      u = sr.get('url', '')
+                      if t and u:
+                          lines.append('  \U0001f517 ' + t[:60] + ('...' if len(t) > 60 else ''))
               lines.append('━' * 22)
-              lines.append('\U0001f916 Powered by Perplexity AI qua Tempo')
+              lines.append('\U0001f916 Perplexity AI qua Tempo')
               text = '\n'.join(lines)
 
           except Exception as e:
