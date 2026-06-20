@@ -18,10 +18,12 @@ jobs:
         env:
           TEMPO_KEYS_TOML: ${{ secrets.TEMPO_KEYS_TOML }}
           TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
+          TEMPO_STORE_JSON: ${{ secrets.TEMPO_STORE_JSON }}
         run: |
           mkdir -p "$HOME/.tempo/wallet"
           printf '%s' "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
           printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
+          printf '%s' "$TEMPO_STORE_JSON" > "$HOME/.tempo/wallet/store.json"
           tempo wallet whoami
 
       - name: Fetch Random Fact via Tempo Perplexity
