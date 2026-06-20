@@ -1,0 +1,302 @@
+name: SurfAI Daily Post
+
+on:
+  schedule:
+    - cron: '0 1 * * *'   # 8h sang Vietnam (UTC+7)
+    - cron: '0 13 * * *'  # 8h toi Vietnam (UTC+7)
+  workflow_dispatch:
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Tempo CLI
+        run: |
+          curl -fsSL https://tempo.xyz/install | bash
+          echo "$HOME/.tempo/bin" >> $GITHUB_PATH
+
+      - name: Setup Tempo Wallet
+        env:
+          TEMPO_KEYS_TOML: ${{ secrets.TEMPO_KEYS_TOML }}
+          TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
+        run: |
+          mkdir -p "$HOME/.tempo/wallet"
+          printf '%s' "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
+          printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
+          tempo wallet whoami
+
+      - name: Install Python deps
+        run: pip install twikit requests
+
+      - name: Research SurfAI + Write Tweet
+        run: |
+          TODAY=$(date +"%B %d, %Y")
+          python3 - "$TODAY" << 'PYEOF'
+          import json, sys
+          today = sys.argv[1]
+          style = """
+          STYLE: Viet nhu nguoi Viet crypto thuat, khong giong AI
+          - Dung "minh" thay "tao/toi", "ban" thay "may"
+          - Cau dau gay to mo, bat ngo, hoi huoc
+          - Dung slang crypto VN: "cu khoai lang nuong" (trieu $), "bao" (grind), "chien than", "cooking", "load"
+          - Bullet point ngan voi emoji/ky tu: viet ✅ Loading... 🔥
+          - Tag @SurfAI va @nguoi cu the
+          - Ket bang call-to-action that, co cam xuc ca nhan
+          - KHONG viet doan van dai, max 3-4 dong mot khoi
+          - Mix tieng Viet + tieng Anh tu nhien
+          - Dung "minh" va "ban", khong dung "tao"
+          - Cam xuc that, than mat, nhu ke voi ban than
+          - Max 280 ky tu
+          """
+          body = {
+              "model": "sonar-pro",
+              "messages": [{"role": "user", "content": (
+                  f"Today is {today}. "
+                  "Research @SurfAI (asksurf.ai) for LATEST updates this week "
+                  "(announcements, features, events, community milestones). "
+                  "Then write ONE tweet about it following this style:\n"
+                  + style +
+                  "\nOutput ONLY the tweet text in Vietnamese. Nothing else."
+              )}],
+              "max_tokens": 300,
+              "search_recency_filter": "week"
+          }
+          with open('/tmp/tweet_body.json', 'w') as f:
+              json.dump(body, f)
+          print("Body OK")
+          PYEOF
+
+          tempo request -j -X POST \
+            -d @/tmp/tweet_body.json \
+            -H 'Content-Type: application/json' \
+            https://perplexity.mpp.paywithlocus.com/perplexity/chat \
+            -o /tmp/tweet_result.json > /dev/null 2>/dev/null
+          echo "TWEET_EXIT=$? SIZE=$(wc -c < /tmp/tweet_result.json)"
+
+      - name: Generate Image
+        run: |
+          python3 << 'PYEOF'
+          import json
+          body = {
+              "prompt": (
+                  "Minimalist dark hero image for SurfAI AI crypto research project. "
+                  "A silhouette of a Vietnamese surfer riding a glowing digital ocean wave, "
+                  "neon electric blue and cyan on near-black background. "
+                  "Center: floating holographic panel showing 'SurfAI' with AI circuit patterns. "
+                  "16:9, cinematic, Web3 aesthetic, 4K, high contrast"
+              ),
+              "image_size": "landscape_16_9",
+              "num_images": 1,
+              "output_format": "jpeg"
+          }
+          with open('/tmp/img_body.json', 'w') as f:
+              json.dump(body, f)
+          PYEOF
+
+          tempo request -j -X POST \
+            -d @/tmp/img_body.json \
+            -H 'Content-Type: application/json' \
+            https://fal.mpp.tempo.xyz/fal-ai/flux-pro/v1.1 \
+            -o /tmp/img_result.json > /dev/null 2>/dev/null
+          echo "IMG_EXIT=$? SIZE=$(wc -c < /tmp/img_result.json)"
+
+          python3 -c "
+          import json, urllib.request
+          with open('/tmp/img_result.json') as f: d=json.load(f)
+          url = d['images'][0]['url']
+          urllib.request.urlretrieve(url, '/tmp/post_img.jpeg')
+          print('IMG_OK:', url[:80])
+          "
+
+      - name: Post to X
+        env:
+          X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
+          X_CT0: ${{ secrets.X_CT0 }}
+        run: |
+          python3 << 'PYEOF'
+          import json, os, re, sys, time
+          import urllib.request, urllib.parse
+
+          auth_token = os.environ['X_AUTH_TOKEN']
+          ct0 = os.environ['X_CT0']
+
+          # Doc tweet
+          with open('/tmp/tweet_result.json') as f:
+              data = json.load(f)
+          tweet = data['data']['choices'][0]['message']['content']
+          tweet = re.sub(r'\[\d+\]', '', tweet).strip()
+          print("TWEET:", tweet[:100])
+
+          # Upload anh
+          BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+          headers_base = {
+              'Authorization': f'Bearer {BEARER}',
+              'Cookie': f'auth_token={auth_token}; ct0={ct0}',
+              'x-csrf-token': ct0,
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+              'x-twitter-active-user': 'yes',
+              'x-twitter-auth-type': 'OAuth2Session',
+              'x-twitter-client-language': 'en',
+          }
+
+          media_id = None
+          try:
+              with open('/tmp/post_img.jpeg', 'rb') as f:
+                  img_data = f.read()
+
+              import base64
+              img_b64 = base64.b64encode(img_data).decode()
+              upload_body = urllib.parse.urlencode({
+                  'media_data': img_b64,
+                  'media_type': 'image/jpeg'
+              }).encode()
+              upload_headers = {**headers_base, 'Content-Type': 'application/x-www-form-urlencoded'}
+              req = urllib.request.Request(
+                  'https://upload.twitter.com/1.1/media/upload.json',
+                  data=upload_body, headers=upload_headers, method='POST'
+              )
+              with urllib.request.urlopen(req) as r:
+                  media_id = json.loads(r.read())['media_id_string']
+              print(f"Media uploaded: {media_id}")
+          except Exception as e:
+              print(f"Image upload failed (will post text only): {e}")
+
+          # Tim query ID CreateTweet tu X JS
+          def get_query_id():
+              try:
+                  req = urllib.request.Request(
+                      'https://x.com',
+                      headers={'User-Agent': headers_base['User-Agent']}
+                  )
+                  with urllib.request.urlopen(req) as r:
+                      html = r.read().decode('utf-8', errors='ignore')
+                  js_urls = re.findall(r'https://abs\.twimg\.com/responsive-web/[^"]+\.js', html)
+                  for js_url in js_urls[:5]:
+                      try:
+                          req2 = urllib.request.Request(js_url, headers={'User-Agent': headers_base['User-Agent']})
+                          with urllib.request.urlopen(req2) as r2:
+                              js = r2.read().decode('utf-8', errors='ignore')
+                          m = re.search(r'"CreateTweet"\s*:\s*\{[^}]*"queryId"\s*:\s*"([^"]+)"', js)
+                          if m:
+                              return m.group(1)
+                      except:
+                          continue
+              except:
+                  pass
+              return "oB-5XsA-erG3OuDWAaLA2g"  # fallback queryId
+
+          query_id = get_query_id()
+          print(f"QueryID: {query_id}")
+
+          # Tao tweet
+          variables = {
+              "tweet_text": tweet,
+              "dark_request": False,
+              "media": {"media_entities": [], "possibly_sensitive": False},
+              "semantic_annotation_ids": []
+          }
+          if media_id:
+              variables["media"]["media_entities"] = [{"media_id": media_id, "tagged_users": []}]
+
+          gql_body = json.dumps({
+              "variables": variables,
+              "features": {
+                  "interactive_text_enabled": True,
+                  "longform_notetweets_inline_media_enabled": False,
+                  "responsive_web_text_conversations_enabled": False,
+                  "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": False,
+                  "vibe_api_enabled": False,
+                  "rweb_lists_timeline_redesign_enabled": True,
+                  "responsive_web_graphql_exclude_directive_enabled": True,
+                  "verified_phone_label_enabled": False,
+                  "creator_subscriptions_tweet_preview_api_enabled": True,
+                  "responsive_web_graphql_timeline_navigation_enabled": True,
+                  "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+                  "tweetypie_unmention_optimization_enabled": True,
+                  "responsive_web_edit_tweet_api_enabled": True,
+                  "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+                  "view_counts_everywhere_api_enabled": True,
+                  "longform_notetweets_consumption_enabled": True,
+                  "tweet_awards_web_tipping_enabled": False,
+                  "freedom_of_speech_not_reach_tweet_label_enabled": False,
+                  "standardized_nudges_misinfo": True,
+                  "longform_notetweets_rich_text_read_enabled": True,
+                  "responsive_web_enhance_cards_enabled": False,
+                  "subscriptions_verification_info_enabled": True,
+                  "subscriptions_verification_info_reason_enabled": True,
+                  "subscriptions_verification_info_verified_since_enabled": True,
+                  "super_follow_badge_privacy_enabled": False,
+                  "super_follow_exclusive_tweet_notifications_enabled": False,
+                  "super_follow_user_api_enabled": False,
+                  "super_follow_tweet_api_enabled": False,
+                  "android_graphql_skip_api_media_color_palette": False,
+                  "creator_subscriptions_subscription_count_enabled": False,
+                  "blue_business_profile_image_shape_enabled": False,
+                  "unified_cards_ad_metadata_container_dynamic_card_content_query_enabled": False
+              }
+          }).encode()
+
+          post_headers = {
+              **headers_base,
+              'Content-Type': 'application/json',
+          }
+          req3 = urllib.request.Request(
+              f'https://x.com/i/api/graphql/{query_id}/CreateTweet',
+              data=gql_body, headers=post_headers, method='POST'
+          )
+          try:
+              with urllib.request.urlopen(req3) as r3:
+                  resp = json.loads(r3.read())
+              tweet_id = resp['data']['create_tweet']['tweet_results']['result']['rest_id']
+              tweet_url = f"https://x.com/Hanzentrade/status/{tweet_id}"
+              print(f"POSTED: {tweet_url}")
+              with open('/tmp/tweet_url.txt', 'w') as f:
+                  f.write(tweet_url)
+          except Exception as e:
+              print(f"Post failed: {e}")
+              with open('/tmp/tweet_url.txt', 'w') as f:
+                  f.write("")
+          PYEOF
+
+      - name: Send to Discord
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import os, urllib.request, urllib.parse, json
+
+          token = os.environ.get('DISCORD_TOKEN', '')
+          channel_id = "1512125117302575154"
+
+          try:
+              with open('/tmp/tweet_url.txt') as f:
+                  tweet_url = f.read().strip()
+          except:
+              tweet_url = ""
+
+          if not tweet_url:
+              print("No tweet URL, skipping Discord")
+              exit(0)
+
+          if not token:
+              print("No DISCORD_TOKEN set, skipping Discord")
+              exit(0)
+
+          msg = tweet_url
+          body = json.dumps({"content": msg}).encode()
+          req = urllib.request.Request(
+              f'https://discord.com/api/v9/channels/{channel_id}/messages',
+              data=body,
+              headers={
+                  'Authorization': token,
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'Mozilla/5.0'
+              },
+              method='POST'
+          )
+          try:
+              with urllib.request.urlopen(req) as r:
+                  print(f"Discord sent: {r.status}")
+          except Exception as e:
+              print(f"Discord error: {e}")
+          PYEOF
