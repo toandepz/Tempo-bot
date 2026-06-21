@@ -163,65 +163,52 @@ jobs:
           except Exception as e:
               print(f"No image: {e}")
 
-          # QueryID lay tu twikit 2.3.3 source (SiM_cAu83R0wnrpmKQQSEw)
-          query_id = "SiM_cAu83R0wnrpmKQQSEw"
-          print(f"QueryID: {query_id}")
+          # Dung twikit voi KEY_BYTE patch de co x-client-transaction-id
+          import subprocess, sys, asyncio
+          subprocess.run([sys.executable, '-m', 'pip', 'install', 'twikit', 'bs4', '-q'])
 
-          # Post tweet qua GraphQL voi queryId lay tu twikit
           tweet_url = ""
-          try:
-              variables = {
-                  "tweet_text": tweet,
-                  "dark_request": False,
-                  "media": {"media_entities": [{"media_id": media_id, "tagged_users": []}] if media_id else [], "possibly_sensitive": False},
-                  "semantic_annotation_ids": [],
-                  "disallowed_reply_options": None
-              }
-              features = {
-                  "creator_subscriptions_tweet_preview_api_enabled": True,
-                  "c9s_tweet_anatomy_moderator_badge_enabled": True,
-                  "tweetypie_unmention_optimization_enabled": True,
-                  "responsive_web_edit_tweet_api_enabled": True,
-                  "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-                  "view_counts_everywhere_api_enabled": True,
-                  "longform_notetweets_consumption_enabled": True,
-                  "responsive_web_twitter_article_tweet_consumption_enabled": True,
-                  "tweet_awards_web_tipping_enabled": False,
-                  "longform_notetweets_rich_text_read_enabled": True,
-                  "longform_notetweets_inline_media_enabled": True,
-                  "rweb_video_timestamps_enabled": True,
-                  "responsive_web_graphql_exclude_directive_enabled": True,
-                  "verified_phone_label_enabled": False,
-                  "freedom_of_speech_not_reach_fetch_enabled": True,
-                  "standardized_nudges_misinfo": True,
-                  "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-                  "responsive_web_media_download_video_enabled": False,
-                  "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-                  "responsive_web_graphql_timeline_navigation_enabled": True,
-                  "responsive_web_enhance_cards_enabled": False
-              }
-              gql = json.dumps({"variables": variables, "features": features, "queryId": query_id}).encode()
-              req2 = urllib.request.Request(
-                  f'https://x.com/i/api/graphql/{query_id}/CreateTweet',
-                  data=gql,
-                  headers={**headers, 'Content-Type': 'application/json'},
-                  method='POST'
-              )
-              with urllib.request.urlopen(req2) as r2:
-                  raw = r2.read()
-                  resp = json.loads(raw)
-              print(f"X response keys: {list(resp.get('data',{}).keys())[:5]}")
-              # Thu ca create_tweet va createTweet
-              data = resp.get('data', {})
-              ct = data.get('create_tweet') or data.get('createTweet') or {}
-              tweet_id = ct.get('tweet_results',{}).get('result',{}).get('rest_id','')
-              if tweet_id:
-                  tweet_url = f"https://x.com/Hanzentrade/status/{tweet_id}"
-                  print(f"POSTED: {tweet_url}")
-              else:
-                  print(f"No tweet_id. Response: {raw[:500].decode()}")
-          except Exception as e:
-              print(f"Post X failed: {e}")
+          async def post_tweet_twikit():
+              from twikit import Client
+              from twikit.x_client_transaction.transaction import ClientTransaction
+              import re as re2
+
+              # Patch KEY_BYTE: tu fetch homepage de lay indices
+              browser_ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+              fetch_headers = {'User-Agent': browser_ua, 'Accept': 'text/html,*/*', 'Accept-Language': 'en-US,en;q=0.9'}
+              try:
+                  with urllib.request.urlopen(urllib.request.Request('https://x.com', headers=fetch_headers), timeout=15) as rh:
+                      html = rh.read().decode('utf-8', errors='ignore')
+                  m = re2.search(r"['\"]ondemand\.s['\"]\s*:\s*['\"](\w+)['\"]", html)
+                  if m:
+                      js_url = f"https://abs.twimg.com/responsive-web/client-web/ondemand.s.{m.group(1)}a.js"
+                      with urllib.request.urlopen(urllib.request.Request(js_url, headers=fetch_headers), timeout=15) as rj:
+                          js = rj.read().decode('utf-8', errors='ignore')
+                      indices = [int(x) for x in re2.findall(r'\(\w\[(\d{1,2})\],\s*16\)', js)]
+                      if indices:
+                          ClientTransaction.DEFAULT_ROW_INDEX = indices[0]
+                          ClientTransaction.DEFAULT_KEY_BYTES_INDICES = indices[1:]
+                          print(f"KEY_BYTE: row={indices[0]} indices={indices[1:6]}")
+                      else:
+                          print("KEY_BYTE: indices not found in JS")
+                  else:
+                      print("KEY_BYTE: ondemand.s hash not found")
+              except Exception as e:
+                  print(f"KEY_BYTE fetch failed: {e}")
+
+              client = Client('en-US')
+              client.set_cookies({'auth_token': auth_token, 'ct0': ct0})
+              try:
+                  media_ids_arg = [media_id] if media_id else None
+                  tw = await client.create_tweet(text=tweet, media_ids=media_ids_arg)
+                  url = f"https://x.com/Hanzentrade/status/{tw.id}"
+                  print(f"POSTED: {url}")
+                  return url
+              except Exception as e:
+                  print(f"Post X failed: {e}")
+                  return ""
+
+          tweet_url = asyncio.run(post_tweet_twikit())
 
           # Gui Discord
           if tweet_url and discord_token:
