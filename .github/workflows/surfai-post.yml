@@ -185,27 +185,31 @@ jobs:
               try:
                   with urllib.request.urlopen(urllib.request.Request('https://x.com/home', headers=fetch_headers), timeout=15) as rh:
                       html = rh.read().decode('utf-8', errors='ignore')
-                  print(f"HTML len={len(html)}")
-                  # Tim URL ondemand.s truc tiep (format moi cua X)
-                  m = (re2.search(r'ondemand\.s\.([\w]+)a\.js', html) or
-                       re2.search(r'abs\.twimg\.com[^"\']*?ondemand\.s\.([\w]+)', html) or
-                       re2.search(r"""['\"]{1}ondemand\.s['\"]{1}:\s*['\"]{1}([\w]+)['\"]{1}""", html))
-                  if m:
-                      hash_val = m.group(1)
-                      js_url = f"https://abs.twimg.com/responsive-web/client-web/ondemand.s.{hash_val}a.js"
-                      print(f"Hash found: {hash_val[:12]}...")
-                      print(f"JS URL: {js_url[-40:]}")
-                      with urllib.request.urlopen(urllib.request.Request(js_url, headers=fetch_headers), timeout=15) as rj:
-                          js = rj.read().decode('utf-8', errors='ignore')
-                      indices = [int(x) for x in re2.findall(r'\(\w\[(\d{1,2})\],\s*16\)', js)]
-                      if indices:
-                          ClientTransaction.DEFAULT_ROW_INDEX = indices[0]
-                          ClientTransaction.DEFAULT_KEY_BYTES_INDICES = indices[1:]
-                          print(f"KEY_BYTE: row={indices[0]} indices={indices[1:6]}")
-                      else:
-                          print("KEY_BYTE: indices not found in JS")
-                  else:
-                      print("KEY_BYTE: ondemand.s hash not found")
+                  # Tim tat ca JS URLs trong HTML va scan tim KEY_BYTE pattern
+                  js_urls_found = re2.findall(
+                      r'https://abs\.twimg\.com/responsive-web/client-web/[^\s"\'<>]+\.js',
+                      html
+                  )
+                  # Uu tien file nho (ondemand) truoc
+                  js_urls_found = sorted(set(js_urls_found), key=lambda u: (0 if 'ondemand' in u else 1, len(u)))
+                  print(f"JS files found: {len(js_urls_found)}, first: {js_urls_found[0][-50:] if js_urls_found else 'none'}")
+                  KEY_BYTE_PATTERN = re2.compile(r'\(\w\[(\d{1,2})\],\s*16\)')
+                  found_indices = False
+                  for js_url in js_urls_found[:10]:
+                      try:
+                          with urllib.request.urlopen(urllib.request.Request(js_url, headers=fetch_headers), timeout=10) as rj:
+                              js = rj.read().decode('utf-8', errors='ignore')
+                          indices = [int(x) for x in KEY_BYTE_PATTERN.findall(js)]
+                          if indices:
+                              ClientTransaction.DEFAULT_ROW_INDEX = indices[0]
+                              ClientTransaction.DEFAULT_KEY_BYTES_INDICES = indices[1:]
+                              print(f"KEY_BYTE found in {js_url[-30:]}: row={indices[0]}")
+                              found_indices = True
+                              break
+                      except Exception:
+                          continue
+                  if not found_indices:
+                      print("KEY_BYTE: not found in any JS file")
               except Exception as e:
                   print(f"KEY_BYTE fetch failed: {e}")
 
