@@ -199,10 +199,18 @@ jobs:
                   method='POST'
               )
               with urllib.request.urlopen(req2) as r2:
-                  resp = json.loads(r2.read())
-              tweet_id = resp['data']['create_tweet']['tweet_results']['result']['rest_id']
-              tweet_url = f"https://x.com/Hanzentrade/status/{tweet_id}"
-              print(f"POSTED: {tweet_url}")
+                  raw = r2.read()
+                  resp = json.loads(raw)
+              print(f"X response keys: {list(resp.get('data',{}).keys())[:5]}")
+              # Thu ca create_tweet va createTweet
+              data = resp.get('data', {})
+              ct = data.get('create_tweet') or data.get('createTweet') or {}
+              tweet_id = ct.get('tweet_results',{}).get('result',{}).get('rest_id','')
+              if tweet_id:
+                  tweet_url = f"https://x.com/Hanzentrade/status/{tweet_id}"
+                  print(f"POSTED: {tweet_url}")
+              else:
+                  print(f"No tweet_id. Response: {raw[:500].decode()}")
           except Exception as e:
               print(f"Post X failed: {e}")
 
