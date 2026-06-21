@@ -154,23 +154,74 @@ jobs:
           except Exception as e:
               print(f"No image: {e}")
 
-          # Post tweet qua v1.1 statuses/update (on dinh, khong can queryId)
+          # Lay queryId tu twikit (luon up-to-date)
+          import subprocess, sys
+          subprocess.run([sys.executable, '-m', 'pip', 'install', 'twikit', '-q'])
+          qid_result = subprocess.run([sys.executable, '-c', '''
+import os, inspect, re
+try:
+    import twikit
+    d = os.path.dirname(inspect.getfile(twikit))
+    for root,_,files in os.walk(d):
+        for f in files:
+            if not f.endswith(".py"): continue
+            try:
+                txt = open(os.path.join(root,f)).read()
+                m = re.search(r"[\"\\x27]CreateTweet[\"\\x27]\\s*:\\s*[\"\\x27]([A-Za-z0-9_-]{15,})[\"\\x27]", txt)
+                if m: print(m.group(1)); break
+            except: pass
+except Exception as e:
+    print("ERR:"+str(e))
+'''], capture_output=True, text=True)
+          query_id = qid_result.stdout.strip()
+          if not query_id or query_id.startswith('ERR'):
+              query_id = "UYy4T67XpYXgDKbiz9E7LA"  # fallback known good id
+          print(f"QueryID: {query_id}")
+
+          # Post tweet qua GraphQL voi queryId lay tu twikit
           tweet_url = ""
           try:
-              params = {'status': tweet, 'possibly_sensitive': 'false'}
-              if media_id:
-                  params['media_ids'] = media_id
+              variables = {
+                  "tweet_text": tweet,
+                  "dark_request": False,
+                  "media": {"media_entities": [{"media_id": media_id, "tagged_users": []}] if media_id else [], "possibly_sensitive": False},
+                  "semantic_annotation_ids": [],
+                  "disallowed_reply_options": None
+              }
+              features = {"communities_web_enable_tweet_community_results_fetch": True,
+                  "c9s_tweet_anatomy_moderator_badge_enabled": True,
+                  "tweetypie_unmention_optimization_enabled": True,
+                  "responsive_web_edit_tweet_api_enabled": True,
+                  "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+                  "view_counts_everywhere_api_enabled": True,
+                  "longform_notetweets_consumption_enabled": True,
+                  "responsive_web_twitter_article_tweet_consumption_enabled": True,
+                  "tweet_awards_web_tipping_enabled": False,
+                  "creator_subscriptions_quote_tweet_preview_enabled": False,
+                  "longform_notetweets_rich_text_read_enabled": True,
+                  "longform_notetweets_inline_media_enabled": True,
+                  "articles_preview_enabled": True,
+                  "rweb_video_timestamps_enabled": True,
+                  "rweb_tipjar_consumption_enabled": True,
+                  "responsive_web_graphql_exclude_directive_enabled": True,
+                  "verified_phone_label_enabled": False,
+                  "freedom_of_speech_not_reach_tweet_label_enabled": False,
+                  "standardized_nudges_misinfo": True,
+                  "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+                  "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+                  "responsive_web_graphql_timeline_navigation_enabled": True,
+                  "responsive_web_enhance_cards_enabled": False}
+              gql = json.dumps({"variables": variables, "features": features}).encode()
               req2 = urllib.request.Request(
-                  'https://api.twitter.com/1.1/statuses/update.json',
-                  data=urllib.parse.urlencode(params).encode(),
-                  headers={**headers, 'Content-Type': 'application/x-www-form-urlencoded'},
+                  f'https://x.com/i/api/graphql/{query_id}/CreateTweet',
+                  data=gql,
+                  headers={**headers, 'Content-Type': 'application/json'},
                   method='POST'
               )
               with urllib.request.urlopen(req2) as r2:
                   resp = json.loads(r2.read())
-              tweet_id = resp['id_str']
-              screen_name = resp['user']['screen_name']
-              tweet_url = f"https://x.com/{screen_name}/status/{tweet_id}"
+              tweet_id = resp['data']['create_tweet']['tweet_results']['result']['rest_id']
+              tweet_url = f"https://x.com/Hanzentrade/status/{tweet_id}"
               print(f"POSTED: {tweet_url}")
           except Exception as e:
               print(f"Post X failed: {e}")
