@@ -195,15 +195,18 @@ jobs:
                   print(f"JS files found: {len(js_urls_found)}, first: {js_urls_found[0][-50:] if js_urls_found else 'none'}")
                   KEY_BYTE_PATTERN = re2.compile(r'\(\w\[(\d{1,2})\],\s*16\)')
                   found_indices = False
-                  for js_url in js_urls_found[:10]:
+                  for js_url in js_urls_found[:30]:
                       try:
                           with urllib.request.urlopen(urllib.request.Request(js_url, headers=fetch_headers), timeout=10) as rj:
                               js = rj.read().decode('utf-8', errors='ignore')
+                          # File dung phai chua "obfiowerehiring" (twikit keyword)
+                          if 'obfiowerehiring' not in js:
+                              continue
                           indices = [int(x) for x in KEY_BYTE_PATTERN.findall(js)]
-                          if indices:
+                          if len(indices) >= 5:  # Can nhieu indices
                               ClientTransaction.DEFAULT_ROW_INDEX = indices[0]
                               ClientTransaction.DEFAULT_KEY_BYTES_INDICES = indices[1:]
-                              print(f"KEY_BYTE found in {js_url[-30:]}: row={indices[0]}")
+                              print(f"KEY_BYTE found in {js_url[-35:]}: row={indices[0]} n={len(indices)}")
                               found_indices = True
                               break
                       except Exception:
