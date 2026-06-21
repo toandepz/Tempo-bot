@@ -112,6 +112,7 @@ jobs:
           X_CT0: ${{ secrets.X_CT0 }}
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
         run: |
+          python3 -m pip install twikit bs4 -q
           python3 << 'PYEOF'
           import json, os, re, base64, urllib.request, urllib.parse
 
@@ -164,8 +165,7 @@ jobs:
               print(f"No image: {e}")
 
           # Dung twikit voi KEY_BYTE patch de co x-client-transaction-id
-          import subprocess, sys, asyncio
-          subprocess.run([sys.executable, '-m', 'pip', 'install', 'twikit', 'bs4', '-q'])
+          import asyncio
 
           tweet_url = ""
           async def post_tweet_twikit():
