@@ -154,28 +154,8 @@ jobs:
           except Exception as e:
               print(f"No image: {e}")
 
-          # Lay queryId tu twikit (luon up-to-date)
-          import subprocess, sys
-          subprocess.run([sys.executable, '-m', 'pip', 'install', 'twikit', '-q'])
-          qid_result = subprocess.run([sys.executable, '-c', '''
-import os, inspect, re
-try:
-    import twikit
-    d = os.path.dirname(inspect.getfile(twikit))
-    for root,_,files in os.walk(d):
-        for f in files:
-            if not f.endswith(".py"): continue
-            try:
-                txt = open(os.path.join(root,f)).read()
-                m = re.search(r"[\"\\x27]CreateTweet[\"\\x27]\\s*:\\s*[\"\\x27]([A-Za-z0-9_-]{15,})[\"\\x27]", txt)
-                if m: print(m.group(1)); break
-            except: pass
-except Exception as e:
-    print("ERR:"+str(e))
-'''], capture_output=True, text=True)
-          query_id = qid_result.stdout.strip()
-          if not query_id or query_id.startswith('ERR'):
-              query_id = "UYy4T67XpYXgDKbiz9E7LA"  # fallback known good id
+          # QueryID lay tu twikit 2.3.3 source (SiM_cAu83R0wnrpmKQQSEw)
+          query_id = "SiM_cAu83R0wnrpmKQQSEw"
           print(f"QueryID: {query_id}")
 
           # Post tweet qua GraphQL voi queryId lay tu twikit
