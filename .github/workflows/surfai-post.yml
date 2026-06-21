@@ -16,16 +16,13 @@ jobs:
           echo "$HOME/.tempo/bin" >> $GITHUB_PATH
 
       - name: Setup Tempo Wallet
-        env:
-          TEMPO_KEYS_TOML: ${{ secrets.TEMPO_KEYS_TOML }}
-          TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
         run: |
-          mkdir -p "$HOME/.tempo/wallet"
-          printf '%s' "$TEMPO_KEYS_TOML" > "$HOME/.tempo/wallet/keys.toml"
-          printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
-          tempo wallet whoami
+          echo "Tempo installed, using --private-key for requests (v1.9.1 compatible)"
+          tempo --version
 
       - name: Research SurfAI + Write Tweet
+        env:
+          TEMPO_PRIVATE_KEY: ${{ secrets.TEMPO_PRIVATE_KEY }}
         run: |
           python3 << 'PYEOF'
           import json, datetime
@@ -55,21 +52,21 @@ jobs:
           print("Body OK for:", today)
           PYEOF
 
-          set +e
           tempo request -j -X POST \
+            --private-key "$TEMPO_PRIVATE_KEY" \
             -d @/tmp/tweet_body.json \
             -H 'Content-Type: application/json' \
             https://perplexity.mpp.paywithlocus.com/perplexity/chat \
-            -o /tmp/tweet_result.json > /tmp/tempo_stdout.log 2>&1
+            -o /tmp/tweet_result.json > /dev/null 2>/dev/null
           EXIT=$?
-          set -e
           echo "TWEET_EXIT=$EXIT SIZE=$(wc -c < /tmp/tweet_result.json 2>/dev/null || echo 0)"
-          echo "TEMPO_OUT: $(cat /tmp/tempo_stdout.log 2>/dev/null | head -3)"
           if [ $EXIT -ne 0 ] || [ ! -s /tmp/tweet_result.json ]; then
             printf '{"success":false,"data":{"choices":[{"message":{"content":"SurfAI dang cooking update moi - minh se cap nhat som ban nhe! @SurfAI asksurf.ai"}}],"citations":[],"search_results":[]}}' > /tmp/tweet_result.json
           fi
 
       - name: Generate Image
+        env:
+          TEMPO_PRIVATE_KEY: ${{ secrets.TEMPO_PRIVATE_KEY }}
         run: |
           python3 << 'PYEOF'
           import json
@@ -90,6 +87,7 @@ jobs:
           PYEOF
 
           tempo request -j -X POST \
+            --private-key "$TEMPO_PRIVATE_KEY" \
             -d @/tmp/img_body.json \
             -H 'Content-Type: application/json' \
             https://fal.mpp.tempo.xyz/fal-ai/flux-pro/v1.1 \
