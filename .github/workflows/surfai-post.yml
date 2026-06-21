@@ -210,6 +210,14 @@ jobs:
                           continue
                   if not found_indices:
                       print("KEY_BYTE: not found in any JS file")
+                  else:
+                      # Patch get_indices de twikit.init() dung gia tri da fetch
+                      cached_row = ClientTransaction.DEFAULT_ROW_INDEX
+                      cached_kbytes = ClientTransaction.DEFAULT_KEY_BYTES_INDICES
+                      async def patched_get_indices(self, *args, **kwargs):
+                          return (cached_row, cached_kbytes)
+                      ClientTransaction.get_indices = patched_get_indices
+                      print(f"Patched get_indices: row={cached_row} kbytes={cached_kbytes[:4]}")
               except Exception as e:
                   print(f"KEY_BYTE fetch failed: {e}")
 
