@@ -113,121 +113,51 @@ jobs:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
         run: |
           python3 << 'PYEOF'
-          import json, os, re, base64, urllib.request, urllib.parse, datetime
+          import json, os, re, base64, urllib.request, urllib.parse, datetime, asyncio
 
           auth_token = os.environ['X_AUTH_TOKEN']
           ct0 = os.environ['X_CT0']
           discord_token = os.environ.get('DISCORD_TOKEN', '')
-          now = datetime.datetime.now().strftime('%d/%m/%Y %H:%M')
 
           # Doc tweet
           with open('/tmp/tweet_result.json') as f:
               data = json.load(f)
           tweet = data['data']['choices'][0]['message']['content']
           tweet = re.sub(r'\[\d+\]', '', tweet).strip()
-          print("TWEET:", tweet[:100])
+          print("TWEET:", tweet[:120])
 
           BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-          headers = {
-              'Authorization': f'Bearer {BEARER}',
-              'Cookie': f'auth_token={auth_token}; ct0={ct0}',
-              'x-csrf-token': ct0,
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              'x-twitter-active-user': 'yes',
-              'x-twitter-auth-type': 'OAuth2Session',
-              'x-twitter-client-language': 'en',
-          }
+          # Dung twikit de post (tu handle queryId)
+          async def post_with_twikit():
+              from twikit import Client
+              import os
+              client = Client('en-US')
+              client.set_cookies({'auth_token': auth_token, 'ct0': ct0})
 
-          # Upload anh neu co
-          media_id = None
-          try:
-              with open('/tmp/post_img.jpeg', 'rb') as f:
-                  img_b64 = base64.b64encode(f.read()).decode()
-              upload_data = urllib.parse.urlencode({'media_data': img_b64, 'media_type': 'image/jpeg'}).encode()
-              req = urllib.request.Request(
-                  'https://upload.twitter.com/1.1/media/upload.json',
-                  data=upload_data,
-                  headers={**headers, 'Content-Type': 'application/x-www-form-urlencoded'},
-                  method='POST'
-              )
-              with urllib.request.urlopen(req) as r:
-                  media_id = json.loads(r.read())['media_id_string']
-              print(f"Media: {media_id}")
-          except Exception as e:
-              print(f"No image: {e}")
+              # Upload anh neu co
+              media_id = None
+              try:
+                  import aiofiles
+                  media = await client.upload_media('/tmp/post_img.jpeg')
+                  media_id = media
+                  print(f"Media: {media_id}")
+              except Exception as e:
+                  print(f"No image: {e}")
 
-          # Tim queryId CreateTweet
-          query_id = "oB-5XsA-erG3OuDWAaLA2g"
-          try:
-              req0 = urllib.request.Request('https://x.com', headers={'User-Agent': headers['User-Agent']})
-              with urllib.request.urlopen(req0) as r0:
-                  html = r0.read().decode('utf-8', errors='ignore')
-              js_urls = re.findall(r'https://abs\.twimg\.com/responsive-web/[^"]+\.js', html)
-              for js_url in js_urls[:8]:
-                  try:
-                      req2 = urllib.request.Request(js_url, headers={'User-Agent': headers['User-Agent']})
-                      with urllib.request.urlopen(req2, timeout=5) as r2:
-                          js = r2.read().decode('utf-8', errors='ignore')
-                      m = re.search(r'"CreateTweet"\s*:\s*\{[^}]*"queryId"\s*:\s*"([^"]+)"', js)
-                      if m:
-                          query_id = m.group(1)
-                          print(f"QueryID found: {query_id}")
-                          break
-                  except:
-                      continue
-          except Exception as e:
-              print(f"Using fallback queryId: {e}")
+              # Dang tweet
+              try:
+                  tw = await client.create_tweet(
+                      text=tweet,
+                      media_ids=[media_id] if media_id else None
+                  )
+                  url = f"https://x.com/Hanzentrade/status/{tw.id}"
+                  print(f"POSTED: {url}")
+                  return url
+              except Exception as e:
+                  print(f"Post X failed: {e}")
+                  return ""
 
-          # Post tweet
-          variables = {
-              "tweet_text": tweet,
-              "dark_request": False,
-              "media": {"media_entities": [], "possibly_sensitive": False},
-              "semantic_annotation_ids": []
-          }
-          if media_id:
-              variables["media"]["media_entities"] = [{"media_id": media_id, "tagged_users": []}]
-
-          features = {
-              "interactive_text_enabled": True,
-              "longform_notetweets_inline_media_enabled": False,
-              "responsive_web_text_conversations_enabled": False,
-              "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": False,
-              "vibe_api_enabled": False,
-              "rweb_lists_timeline_redesign_enabled": True,
-              "responsive_web_graphql_exclude_directive_enabled": True,
-              "verified_phone_label_enabled": False,
-              "creator_subscriptions_tweet_preview_api_enabled": True,
-              "responsive_web_graphql_timeline_navigation_enabled": True,
-              "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-              "tweetypie_unmention_optimization_enabled": True,
-              "responsive_web_edit_tweet_api_enabled": True,
-              "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-              "view_counts_everywhere_api_enabled": True,
-              "longform_notetweets_consumption_enabled": True,
-              "tweet_awards_web_tipping_enabled": False,
-              "freedom_of_speech_not_reach_tweet_label_enabled": False,
-              "standardized_nudges_misinfo": True,
-              "longform_notetweets_rich_text_read_enabled": True,
-              "responsive_web_enhance_cards_enabled": False
-          }
-
-          gql_body = json.dumps({"variables": variables, "features": features}).encode()
-          tweet_url = ""
-          try:
-              req3 = urllib.request.Request(
-                  f'https://x.com/i/api/graphql/{query_id}/CreateTweet',
-                  data=gql_body,
-                  headers={**headers, 'Content-Type': 'application/json'},
-                  method='POST'
-              )
-              with urllib.request.urlopen(req3) as r3:
-                  resp = json.loads(r3.read())
-              tweet_id = resp['data']['create_tweet']['tweet_results']['result']['rest_id']
-              tweet_url = f"https://x.com/Hanzentrade/status/{tweet_id}"
-              print(f"POSTED: {tweet_url}")
-          except Exception as e:
-              print(f"Post X failed: {e}")
+          tweet_url = asyncio.run(post_with_twikit())
 
           # Gui Discord
           if tweet_url and discord_token:
