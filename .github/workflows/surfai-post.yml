@@ -123,7 +123,13 @@ jobs:
               data = json.load(f)
           tweet = data['data']['choices'][0]['message']['content']
           tweet = re.sub(r'\[\d+\]', '', tweet).strip()
+          tweet = re.sub(r'\*\*(.+?)\*\*', r'\1', tweet)  # strip **bold**
+          tweet = re.sub(r'\*(.+?)\*', r'\1', tweet)        # strip *italic*
+          tweet = re.sub(r'__(.+?)__', r'\1', tweet)        # strip __underline__
+          if len(tweet) > 275:
+              tweet = tweet[:272] + '...'
           print("TWEET:", tweet[:120])
+          print(f"Length: {len(tweet)}")
 
           BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
           headers = {
