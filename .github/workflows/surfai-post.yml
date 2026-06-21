@@ -55,15 +55,18 @@ jobs:
           print("Body OK for:", today)
           PYEOF
 
+          set +e
           tempo request -j -X POST \
             -d @/tmp/tweet_body.json \
             -H 'Content-Type: application/json' \
             https://perplexity.mpp.paywithlocus.com/perplexity/chat \
-            -o /tmp/tweet_result.json > /dev/null 2>/dev/null
+            -o /tmp/tweet_result.json > /tmp/tempo_stdout.log 2>&1
           EXIT=$?
+          set -e
           echo "TWEET_EXIT=$EXIT SIZE=$(wc -c < /tmp/tweet_result.json 2>/dev/null || echo 0)"
+          echo "TEMPO_OUT: $(cat /tmp/tempo_stdout.log 2>/dev/null | head -3)"
           if [ $EXIT -ne 0 ] || [ ! -s /tmp/tweet_result.json ]; then
-            printf '{"success":false,"data":{"choices":[{"message":{"content":"SurfAI dang cooking update moi - minh se cap nhat sớm ban nhe! @SurfAI asksurf.ai"}}],"citations":[],"search_results":[]}}' > /tmp/tweet_result.json
+            printf '{"success":false,"data":{"choices":[{"message":{"content":"SurfAI dang cooking update moi - minh se cap nhat som ban nhe! @SurfAI asksurf.ai"}}],"citations":[],"search_results":[]}}' > /tmp/tweet_result.json
           fi
 
       - name: Generate Image
