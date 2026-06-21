@@ -112,15 +112,13 @@ jobs:
           X_CT0: ${{ secrets.X_CT0 }}
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
         run: |
-          python3 -m pip install twikit -q
           python3 << 'PYEOF'
-          import json, os, re, base64, urllib.request, urllib.parse, datetime, asyncio
+          import json, os, re, base64, urllib.request, urllib.parse
 
           auth_token = os.environ['X_AUTH_TOKEN']
           ct0 = os.environ['X_CT0']
           discord_token = os.environ.get('DISCORD_TOKEN', '')
 
-          # Doc tweet
           with open('/tmp/tweet_result.json') as f:
               data = json.load(f)
           tweet = data['data']['choices'][0]['message']['content']
@@ -128,37 +126,54 @@ jobs:
           print("TWEET:", tweet[:120])
 
           BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-          # Dung twikit de post (tu handle queryId)
-          async def post_with_twikit():
-              from twikit import Client
-              import os
-              client = Client('en-US')
-              client.set_cookies({'auth_token': auth_token, 'ct0': ct0})
+          headers = {
+              'Authorization': f'Bearer {BEARER}',
+              'Cookie': f'auth_token={auth_token}; ct0={ct0}',
+              'x-csrf-token': ct0,
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+              'x-twitter-active-user': 'yes',
+              'x-twitter-auth-type': 'OAuth2Session',
+              'x-twitter-client-language': 'en',
+          }
 
-              # Upload anh neu co
-              media_id = None
-              try:
-                  import aiofiles
-                  media = await client.upload_media('/tmp/post_img.jpeg')
-                  media_id = media
-                  print(f"Media: {media_id}")
-              except Exception as e:
-                  print(f"No image: {e}")
+          # Upload anh qua v1.1 media upload
+          media_id = None
+          try:
+              with open('/tmp/post_img.jpeg', 'rb') as f:
+                  img_b64 = base64.b64encode(f.read()).decode()
+              udata = urllib.parse.urlencode({'media_data': img_b64, 'media_type': 'image/jpeg'}).encode()
+              req = urllib.request.Request(
+                  'https://upload.twitter.com/1.1/media/upload.json',
+                  data=udata,
+                  headers={**headers, 'Content-Type': 'application/x-www-form-urlencoded'},
+                  method='POST'
+              )
+              with urllib.request.urlopen(req) as r:
+                  media_id = json.loads(r.read())['media_id_string']
+              print(f"Media: {media_id}")
+          except Exception as e:
+              print(f"No image: {e}")
 
-              # Dang tweet
-              try:
-                  tw = await client.create_tweet(
-                      text=tweet,
-                      media_ids=[media_id] if media_id else None
-                  )
-                  url = f"https://x.com/Hanzentrade/status/{tw.id}"
-                  print(f"POSTED: {url}")
-                  return url
-              except Exception as e:
-                  print(f"Post X failed: {e}")
-                  return ""
-
-          tweet_url = asyncio.run(post_with_twikit())
+          # Post tweet qua v1.1 statuses/update (on dinh, khong can queryId)
+          tweet_url = ""
+          try:
+              params = {'status': tweet, 'possibly_sensitive': 'false'}
+              if media_id:
+                  params['media_ids'] = media_id
+              req2 = urllib.request.Request(
+                  'https://api.twitter.com/1.1/statuses/update.json',
+                  data=urllib.parse.urlencode(params).encode(),
+                  headers={**headers, 'Content-Type': 'application/x-www-form-urlencoded'},
+                  method='POST'
+              )
+              with urllib.request.urlopen(req2) as r2:
+                  resp = json.loads(r2.read())
+              tweet_id = resp['id_str']
+              screen_name = resp['user']['screen_name']
+              tweet_url = f"https://x.com/{screen_name}/status/{tweet_id}"
+              print(f"POSTED: {tweet_url}")
+          except Exception as e:
+              print(f"Post X failed: {e}")
 
           # Gui Discord
           if tweet_url and discord_token:
