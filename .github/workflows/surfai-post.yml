@@ -185,9 +185,17 @@ jobs:
               try:
                   with urllib.request.urlopen(urllib.request.Request('https://x.com/home', headers=fetch_headers), timeout=15) as rh:
                       html = rh.read().decode('utf-8', errors='ignore')
-                  m = re2.search(r"['\"]ondemand\.s['\"]\s*:\s*['\"](\w+)['\"]", html)
+                  print(f"HTML len={len(html)} ondemand={'YES' if 'ondemand' in html else 'NO'}")
+                  # Debug: show snippet around ondemand
+                  idx = html.find('ondemand')
+                  if idx >= 0: print(f"ondemand ctx: {html[max(0,idx-10):idx+60]}")
+                  # Multiple patterns
+                  m = (re2.search(r"""['\"]{1}ondemand\.s['\"]{1}:\s*['\"]{1}([\w]*)['\"]{1}""", html) or
+                       re2.search(r'"ondemand\.s"\s*:\s*"([\w]+)"', html) or
+                       re2.search(r"'ondemand\.s'\s*:\s*'([\w]+)'", html))
                   if m:
                       js_url = f"https://abs.twimg.com/responsive-web/client-web/ondemand.s.{m.group(1)}a.js"
+                      print(f"JS URL: {js_url[-40:]}")
                       with urllib.request.urlopen(urllib.request.Request(js_url, headers=fetch_headers), timeout=15) as rj:
                           js = rj.read().decode('utf-8', errors='ignore')
                       indices = [int(x) for x in re2.findall(r'\(\w\[(\d{1,2})\],\s*16\)', js)]
