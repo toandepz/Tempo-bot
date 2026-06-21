@@ -16,13 +16,18 @@ jobs:
           echo "$HOME/.tempo/bin" >> $GITHUB_PATH
 
       - name: Setup Tempo Wallet
+        env:
+          TEMPO_KEYS_TOML: ${{ secrets.TEMPO_KEYS_TOML }}
+          TEMPO_CONFIG_TOML: ${{ secrets.TEMPO_CONFIG_TOML }}
+          TEMPO_STORE_JSON: ${{ secrets.TEMPO_STORE_JSON }}
         run: |
-          echo "Tempo installed, using --private-key for requests (v1.9.1 compatible)"
-          tempo --version
+          mkdir -p "$HOME/.tempo/wallet"
+          printf '%s' "$TEMPO_KEYS_TOML"   > "$HOME/.tempo/wallet/keys.toml"
+          printf '%s' "$TEMPO_CONFIG_TOML" > "$HOME/.tempo/config.toml"
+          printf '%s' "$TEMPO_STORE_JSON"  > "$HOME/.tempo/wallet/store.json"
+          tempo wallet whoami
 
       - name: Research SurfAI + Write Tweet
-        env:
-          TEMPO_PRIVATE_KEY: ${{ secrets.TEMPO_PRIVATE_KEY }}
         run: |
           python3 << 'PYEOF'
           import json, datetime
@@ -53,7 +58,6 @@ jobs:
           PYEOF
 
           tempo request -j -X POST \
-            --private-key "$TEMPO_PRIVATE_KEY" \
             -d @/tmp/tweet_body.json \
             -H 'Content-Type: application/json' \
             https://perplexity.mpp.paywithlocus.com/perplexity/chat \
@@ -65,8 +69,6 @@ jobs:
           fi
 
       - name: Generate Image
-        env:
-          TEMPO_PRIVATE_KEY: ${{ secrets.TEMPO_PRIVATE_KEY }}
         run: |
           python3 << 'PYEOF'
           import json
@@ -87,7 +89,6 @@ jobs:
           PYEOF
 
           tempo request -j -X POST \
-            --private-key "$TEMPO_PRIVATE_KEY" \
             -d @/tmp/img_body.json \
             -H 'Content-Type: application/json' \
             https://fal.mpp.tempo.xyz/fal-ai/flux-pro/v1.1 \
